@@ -13,7 +13,7 @@
 use crate::config::Config;
 use crate::crypto::load_keypair;
 use crate::convert;
-use crate::helpers::{TonClient, now, create_client_verbose, create_client_local, query, load_ton_address, load_abi};
+use crate::helpers::{TonClient, now, now_ms, create_client_verbose, create_client_local, query, load_ton_address, load_abi};
 use ton_abi::{Contract, ParamType};
 use chrono::{TimeZone, Local};
 use hex;
@@ -32,10 +32,11 @@ use ton_client::processing::{
     ParamsOfWaitForTransaction,
     wait_for_transaction,
     send_message,
+    ErrorCode
 };
-use ton_client::tvm::{run_tvm, run_get, ParamsOfRunTvm, ParamsOfRunGet, run_executor, ParamsOfRunExecutor, AccountForExecutor};
+use ton_client::tvm::{run_tvm, run_get, ParamsOfRunTvm, ParamsOfRunGet, run_executor, ParamsOfRunExecutor, AccountForExecutor, StdContractError};
 use ton_client::error::ClientError;
-use ton_block::{Account, Serializable};
+use ton_block::{Account, Serializable, Deserializable};
 use std::str::FromStr;
 use serde_json::Value;
 
@@ -309,6 +310,89 @@ pub async fn emulate_localy(
     Ok(())
 }
 
+pub async fn run_local_for_account(
+    conf: Config,
+    account: &str,
+    abi: String,
+    method: &str,
+    params: &str,
+) -> Result<(), String> {
+
+    if !conf.is_json {
+        println!("Running get-method...");
+    }
+
+    let ton = create_client_local()?;
+    let abi = load_abi(&abi)?;
+
+    let acc = Account::construct_from_file(account)
+        .map_err(|e| format!(" failed to load account from the file {}: {}", account, e))?;
+
+    let acc_bytes = acc.write_to_bytes()
+        .map_err(|e| format!("failed to load data from the account: {}", e))?;
+    let acc_boc = base64::encode(&acc_bytes);
+
+    let addr = acc.get_addr()
+        .ok_or("failed to load address from the account.")?
+        .to_string();
+
+    let now = now();
+    let expire_at = conf.lifetime + now;
+    let header = FunctionHeader {
+        expire: Some(expire_at),
+        ..Default::default()
+    };
+
+    let msg = prepare_message(
+        ton.clone(),
+        &addr,
+        abi.clone(),
+        method,
+        params,
+        Some(header),
+        None,
+        conf.is_json,
+    ).await?;
+
+    let res = run_local(
+        ton,
+        abi,
+        msg.message,
+        acc_boc
+    ).await?;
+
+    if !conf.is_json {
+        println!("Succeeded.");
+    }
+
+    print_json_result(res, conf);
+    Ok(())
+}
+
+
+async fn run_local(
+    ton: TonClient,
+    abi: Abi,
+    msg: String,
+    acc_boc: String,
+) -> Result<serde_json::Value, String> {
+
+    let result = run_tvm(
+        ton.clone(),
+        ParamsOfRunTvm {
+            message: msg,
+            account: acc_boc,
+            abi: Some(abi.clone()),
+            return_updated_account: Some(true),
+            ..Default::default()
+        },
+    ).await
+        .map_err(|e| format!("run failed: {:#}", e))?;
+    let res = result.decoded.and_then(|d| d.output)
+        .ok_or("Failed to decode the result. Check that abi matches the contract.")?;
+    Ok(res)
+}
+
 async fn send_message_and_wait(
     ton: TonClient,
     addr: &str,
@@ -324,21 +408,7 @@ async fn send_message_and_wait(
         }
         let acc_boc = query_account_boc(ton.clone(), addr).await?;
 
-        let result = run_tvm(
-            ton.clone(),
-            ParamsOfRunTvm {
-                message: msg,
-                account: acc_boc,
-                abi: Some(abi.clone()),
-                return_updated_account: Some(true),
-                ..Default::default()
-            },
-        ).await
-        .map_err(|e| format!("run failed: {:#}", e))?;
-        let res = result.decoded.and_then(|d| d.output)
-            .ok_or("Failed to decode the result. Check that abi matches the contract.")?;
-        Ok(res)
-
+        run_local(ton.clone(), abi, msg, acc_boc).await
 
     } else {
         if !conf.is_json {
@@ -347,7 +417,6 @@ async fn send_message_and_wait(
         let callback = |_| {
             async move {}
         };
-
         let result = send_message(
             ton.clone(),
             ParamsOfSendMessage {
@@ -404,13 +473,13 @@ pub async fn call_contract_with_result(
     let total_attempts = attempts.clone();
     while attempts != 0 {
         attempts -= 1;
-        let now = now();
-        let expire_at = conf.lifetime + now;
+        let expire_at = conf.lifetime + now();
+        let time = now_ms();
         let header = FunctionHeader {
             expire: Some(expire_at),
+            time: Some(time),
             ..Default::default()
         };
-
         let msg = prepare_message(
             ton.clone(),
             addr,
@@ -426,29 +495,17 @@ pub async fn call_contract_with_result(
             print_encoded_message(&msg);
         }
 
-        let mut retry: bool = true;
+        let mut retry: bool = false;
         let error_handler = |err: ClientError| {
-            // obtaining error code
-            let code = err.code.clone();
-            // but if it was simulated locally and local exit code is not zero,
-            // we ignore previous exit code because it means we shouldn't make a retry.
-            if !err.data["exit_code"].is_null() {
-                if err.data["exit_code"].as_i64().unwrap_or(-1) != 0 {
-                    retry = false;
+            // retry only if error code is MessageExpired
+            if err.code == ErrorCode::MessageExpired as u32{
+                // but we should also check possible local execution error
+                let local_error = err.data["local_error"]["data"]["exit_code"].clone();
+                if err.data["local_error"].is_null() ||
+                    local_error.as_i64().unwrap_or(-1) == StdContractError::ReplayProtection as i64||
+                    local_error.as_i64().unwrap_or(-1) == StdContractError::ExtMessageExpired as i64 {
+                    retry = true;
                 }
-            }
-            // There is also another way how SDK can print local run results.
-            let local_error = err.data["local_error"]["data"]["exit_code"].clone();
-            if !local_error.is_null() {
-                if local_error.as_i64().unwrap_or(-1) != 0 {
-                    retry = false;
-                }
-            }
-            // if error code was 4XX then don't perform a retry. Also if error was 508,
-            // it means that message could have been delivered after timeout and for not
-            // to cause double call we shouldn't perform a retry.
-            if  (((code / 100) as u32 % 10) == 4) || (code == 508) {
-                retry = false;
             }
         };
 
@@ -479,6 +536,16 @@ pub async fn call_contract_with_result(
     Err("All attempts have failed".to_owned())
 }
 
+fn print_json_result(result: Value, conf: Config) {
+    if !result.is_null() {
+        if !conf.is_json {
+            println!("Result: {}", serde_json::to_string_pretty(&result).unwrap_or("failed to serialize result".to_owned()));
+        } else {
+            println!("{}", serde_json::to_string_pretty(&result).unwrap_or("failed to serialize result".to_owned()));
+        }
+    }
+}
+
 pub async fn call_contract(
     conf: Config,
     addr: &str,
@@ -493,13 +560,7 @@ pub async fn call_contract(
     if !conf.is_json {
         println!("Succeeded.");
     }
-    if !result.is_null() {
-        if !conf.is_json {
-            println!("Result: {}", serde_json::to_string_pretty(&result).unwrap());
-        } else {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
-        }
-    }
+    print_json_result(result, conf);
     Ok(())
 }
 

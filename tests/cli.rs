@@ -3,6 +3,7 @@ use assert_cmd::Command;
 use std::env;
 use std::time::Duration;
 use std::thread::sleep;
+use std::fs;
 mod common;
 use common::{BIN_NAME, NETWORK, get_config};
 
@@ -223,7 +224,7 @@ fn test_call_giver() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_fee() -> Result<(), Box<dyn std::error::Error>> {
-    let giver_abi_name = "tests/samples/giver.abi.json";
+    // let giver_abi_name = "tests/samples/giver.abi.json";
     let mut cmd = Command::cargo_bin(BIN_NAME)?;
     cmd.arg("fee")
         .arg("storage")
@@ -242,45 +243,45 @@ fn test_fee() -> Result<(), Box<dyn std::error::Error>> {
         .success()
         .stdout(predicate::str::contains("Storage fee per 10000 seconds: "));
 
-    let mut cmd = Command::cargo_bin(BIN_NAME)?;
-    cmd.arg("fee")
-        .arg("call")
-        .arg("0:841288ed3b55d9cdafa806807f02a0ae0c169aa5edfe88a789a6482429756a94")
-        .arg("sendGrams")
-        .arg(r#"{"dest":"0:841288ed3b55d9cdafa806807f02a0ae0c169aa5edfe88a789a6482429756a94","amount":1000000000}"#)
-        .arg("--abi")
-        .arg(giver_abi_name)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#"  "in_msg_fwd_fee":"#))
-        .stdout(predicate::str::contains(r#"  "storage_fee":"#))
-        .stdout(predicate::str::contains(r#"  "gas_fee":"#))
-        .stdout(predicate::str::contains(r#"  "out_msgs_fwd_fee":"#))
-        .stdout(predicate::str::contains(r#"  "total_account_fees":"#))
-        .stdout(predicate::str::contains(r#"  "total_output":"#))
-        .stdout(predicate::str::contains(r#"Succeeded."#));
-
-    let wallet_tvc = "tests/samples/wallet.tvc";
-    let wallet_abi = "tests/samples/wallet.abi.json";
-    let key_path = "tests/deploy_test.key";
-
-    let mut cmd = Command::cargo_bin(BIN_NAME)?;
-    cmd.arg("fee")
-        .arg("deploy")
-        .arg(wallet_tvc)
-        .arg("{}")
-        .arg("--abi")
-        .arg(wallet_abi)
-        .arg("--sign")
-        .arg(key_path)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#"  "in_msg_fwd_fee":"#))
-        .stdout(predicate::str::contains(r#"  "storage_fee":"#))
-        .stdout(predicate::str::contains(r#"  "gas_fee":"#))
-        .stdout(predicate::str::contains(r#"  "out_msgs_fwd_fee":"#))
-        .stdout(predicate::str::contains(r#"  "total_account_fees":"#))
-        .stdout(predicate::str::contains(r#"  "total_output":"#));
+    // let mut cmd = Command::cargo_bin(BIN_NAME)?;
+    // cmd.arg("fee")
+    //     .arg("call")
+    //     .arg("0:841288ed3b55d9cdafa806807f02a0ae0c169aa5edfe88a789a6482429756a94")
+    //     .arg("sendGrams")
+    //     .arg(r#"{"dest":"0:841288ed3b55d9cdafa806807f02a0ae0c169aa5edfe88a789a6482429756a94","amount":1000000000}"#)
+    //     .arg("--abi")
+    //     .arg(giver_abi_name)
+    //     .assert()
+    //     .success()
+    //     .stdout(predicate::str::contains(r#"  "in_msg_fwd_fee":"#))
+    //     .stdout(predicate::str::contains(r#"  "storage_fee":"#))
+    //     .stdout(predicate::str::contains(r#"  "gas_fee":"#))
+    //     .stdout(predicate::str::contains(r#"  "out_msgs_fwd_fee":"#))
+    //     .stdout(predicate::str::contains(r#"  "total_account_fees":"#))
+    //     .stdout(predicate::str::contains(r#"  "total_output":"#))
+    //     .stdout(predicate::str::contains(r#"Succeeded."#));
+    //
+    // let wallet_tvc = "tests/samples/wallet.tvc";
+    // let wallet_abi = "tests/samples/wallet.abi.json";
+    // let key_path = "tests/deploy_test.key";
+    //
+    // let mut cmd = Command::cargo_bin(BIN_NAME)?;
+    // cmd.arg("fee")
+    //     .arg("deploy")
+    //     .arg(wallet_tvc)
+    //     .arg("{}")
+    //     .arg("--abi")
+    //     .arg(wallet_abi)
+    //     .arg("--sign")
+    //     .arg(key_path)
+    //     .assert()
+    //     .success()
+    //     .stdout(predicate::str::contains(r#"  "in_msg_fwd_fee":"#))
+    //     .stdout(predicate::str::contains(r#"  "storage_fee":"#))
+    //     .stdout(predicate::str::contains(r#"  "gas_fee":"#))
+    //     .stdout(predicate::str::contains(r#"  "out_msgs_fwd_fee":"#))
+    //     .stdout(predicate::str::contains(r#"  "total_account_fees":"#))
+    //     .stdout(predicate::str::contains(r#"  "total_output":"#));
 
     Ok(())
 }
@@ -306,8 +307,7 @@ fn test_genaddr() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::cargo_bin(BIN_NAME)?;
     cmd.arg("genaddr")
         .arg("tests/samples/wallet.tvc")
-        .arg("tests/samples/wallet.abi.json")
-        .arg("--verbose");
+        .arg("tests/samples/wallet.abi.json");
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("Input arguments:"))
@@ -353,8 +353,9 @@ fn test_genaddr_wc() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_genaddr_initdata() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::cargo_bin(BIN_NAME)?;
+    fs::copy("tests/data.tvc", "tests/data2.tvc")?;
     cmd.arg("genaddr")
-        .arg("tests/data.tvc")
+        .arg("tests/data2.tvc")
         .arg("tests/data.abi.json")
         .arg("--genkey")
         .arg("key1")
@@ -365,7 +366,7 @@ fn test_genaddr_initdata() -> Result<(), Box<dyn std::error::Error>> {
         .success()
         .stdout(predicate::str::contains("TVC file updated"))
         .stdout(predicate::str::contains("Succeeded"));
-
+    fs::remove_file("tests/data2.tvc")?;
     Ok(())
 }
 
@@ -1566,5 +1567,81 @@ fn test_gen_deploy_message() -> Result<(), Box<dyn std::error::Error>> {
         .stdout(predicate::str::contains("Succeeded"));
 
     let _ = std::fs::remove_file(output);
+    Ok(())
+}
+
+#[test]
+fn test_decode_tvc() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cmd = Command::cargo_bin(BIN_NAME)?;
+    cmd.arg("decode")
+        .arg("account")
+        .arg("data")
+        .arg("--abi")
+        .arg("tests/test_abi_v2.1.abi.json")
+        .arg("--tvc")
+        .arg("tests/decode_fields.tvc")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""__pubkey": "0xe8b1d839abe27b2abb9d4a2943a9143a9c7e2ae06799bd24dec1d7a8891ae5dd","#))
+        .stdout(predicate::str::contains(r#" "a": "I like it.","#));
+
+    Ok(())
+}
+
+
+#[test]
+fn test_dump_tvc() -> Result<(), Box<dyn std::error::Error>> {
+    let tvc_path = "giver.tvc";
+    let giver_addr = "0:841288ed3b55d9cdafa806807f02a0ae0c169aa5edfe88a789a6482429756a94";
+
+    let mut cmd = Command::cargo_bin(BIN_NAME)?;
+    cmd.arg("account")
+        .arg("--dumptvc")
+        .arg(tvc_path)
+        .arg(giver_addr)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Saved contract to"));
+
+    fs::remove_file(tvc_path)?;
+
+    let boc_path = "tests/account.boc";
+
+    let mut cmd = Command::cargo_bin(BIN_NAME)?;
+    cmd.arg("decode")
+        .arg("account")
+        .arg("boc")
+        .arg(boc_path)
+        .arg("--dumptvc")
+        .arg(tvc_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("balance: "))
+        .stdout(predicate::str::contains("state_init"));
+
+    fs::remove_file(tvc_path)?;
+    Ok(())
+}
+
+
+#[test]
+fn test_run_account() -> Result<(), Box<dyn std::error::Error>> {
+    let boc_path = "tests/depool_acc.boc";
+    let abi_path = "tests/samples/fakeDepool.abi.json";
+
+    let mut cmd = Command::cargo_bin(BIN_NAME)?;
+    cmd.arg("run")
+        .arg("--boc")
+        .arg(boc_path)
+        .arg("getData")
+        .arg("{}")
+        .arg("--abi")
+        .arg(abi_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Succeeded."))
+        .stdout(predicate::str::contains("Result: {"))
+        .stdout(predicate::str::contains(r#""reinvest": false,"#));
+
     Ok(())
 }
